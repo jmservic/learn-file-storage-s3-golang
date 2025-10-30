@@ -6,6 +6,7 @@ import (
 	"io"
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
 	"github.com/google/uuid"
+	"os"
 )
 
 func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Request) {
@@ -34,7 +35,7 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 	// TODO: implement the upload here
 	const maxMemory = 10 << 20
 	r.ParseMultipartForm(maxMemory)
-	file, fileHeader, err := r.FormFile("thumbnail")
+	imageReader, fileHeader, err := r.FormFile("thumbnail")
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, "Couldn't find thumbnail", err)
 		return
@@ -44,11 +45,6 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 	if mediaType == "" {
 		respondWithError(w, http.StatusBadRequest, "Missing Content-Type for thumbnail", nil)
 		return
-	}
-
-	imageData, err := io.ReadAll(file)
-	if err !=nil {
-		respondWithError(w, http.StatusInternalServerError, "Error parsing thumbnail data", err)
 	}
 
 	video, err := cfg.db.GetVideo(videoID)
@@ -61,12 +57,16 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	videoThumbnails[videoID] := thumbnail{
-		data: imageData,
-		mediaType: mediaType,
+	filename := getAssetPath(videoID, mediaType)
+	filepath := cfg.getAssetDiskPath(filename)
+	fileHandle, err := os.Create(filepath)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Unable to create file for thumbnail", err)
 	}
+	defer fileHandle.Close()
 
-	tnURL := fmt.Sprintf("http://localhost:%v/api/thumbnails/%v", cfg.port, videoID)
+	io.Copy(fileHandle, imageReader)
+	tnURL := cfg.getAssetURL(filename)
 	video.ThumbnailURL = &tnURL
 
 	err = cfg.db.UpdateVideo(video)
