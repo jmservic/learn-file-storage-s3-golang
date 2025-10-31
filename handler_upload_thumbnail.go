@@ -7,6 +7,7 @@ import (
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
 	"github.com/google/uuid"
 	"os"
+	"mime"
 )
 
 func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Request) {
@@ -41,9 +42,15 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	mediaType := fileHeader.Header.Get("Content-Type")
-	if mediaType == "" {
+	contentType := fileHeader.Header.Get("Content-Type")
+	if contentType == "" {
 		respondWithError(w, http.StatusBadRequest, "Missing Content-Type for thumbnail", nil)
+		return
+	}
+
+	mediaType, _, err := mime.ParseMediaType(contentType)
+	if mediaType != "image/jpeg" || mediaType != "image/png" || err != nil {
+		respondWithError(w, http.StatusBadRequest, "received an invalid content-type", err)
 		return
 	}
 
