@@ -5,7 +5,8 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
-	"github.com/google/uuid"
+	"crypto/rand"
+	"encoding/base64"
 )
 
 func (cfg apiConfig) ensureAssetsDir() error {
@@ -15,9 +16,15 @@ func (cfg apiConfig) ensureAssetsDir() error {
 	return nil
 }
 
-func getAssetPath(videoID uuid.UUID, mediaType string) string {
+func getAssetPath(mediaType string) string {
+	base := make([]byte, 32)
+	_, err := rand.Read(base)
+	if err != nil {
+		panic("failed to generate random bytes")
+	}
+	fileID := base64.RawURLEncoding.EncodeToString(base)
 	ext := mediaTypeToExt(mediaType)
-	return fmt.Sprintf("%v%v", videoID, ext)
+	return fmt.Sprintf("%v%v", fileID, ext)
 }
 
 func (cfg apiConfig) getAssetDiskPath(assetPath string) string {

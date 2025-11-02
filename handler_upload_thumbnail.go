@@ -49,7 +49,7 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 	}
 
 	mediaType, _, err := mime.ParseMediaType(contentType)
-	if mediaType != "image/jpeg" || mediaType != "image/png" || err != nil {
+	if (mediaType != "image/jpeg" && mediaType != "image/png") || err != nil {
 		respondWithError(w, http.StatusBadRequest, "received an invalid content-type", err)
 		return
 	}
@@ -63,8 +63,8 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		respondWithError(w, http.StatusUnauthorized, "Not your video!!", err)
 		return
 	}
-
-	filename := getAssetPath(videoID, mediaType)
+	
+	filename := getAssetPath(mediaType)
 	filepath := cfg.getAssetDiskPath(filename)
 	fileHandle, err := os.Create(filepath)
 	if err != nil {
