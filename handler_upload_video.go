@@ -9,6 +9,10 @@ import (
 	"os"
 	"io"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"os/exec"
+	"bytes"
+	"encoding/json"
+//	"strconv"
 )
 
 func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request) {
@@ -79,6 +83,11 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		respondWithError(w, http.StatusInternalServerError, "error copying video file to temporary file", err)
 		return
 	}
+	
+	aspectRatio, err := getVideoAspectRatio(tempFile.Name())
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "error getting video aspect ratio", err)
+	}
 
 	_, err = tempFile.Seek(0, io.SeekStart)
 	if err != nil {
@@ -86,9 +95,19 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	}
 
 	fileName := getAssetPath(mediaType)
+	var fileKey string
+	switch aspectRatio {
+	case "9:16":
+		fileKey = "portrait/" + fileName
+	case "16:9":
+		fileKey = "landscape/" + fileName
+	default:
+		fileKey = "other/" + fileName
+	}
+
 	putInput := s3.PutObjectInput{
 		Bucket: &cfg.s3Bucket,
-		Key: &fileName,
+		Key: &fileKey,
 		Body: tempFile,
 		ContentType: &contentType,
 	} 
@@ -97,7 +116,7 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		respondWithError(w, http.StatusInternalServerError, "error uploading file to amazon s3", err)
 	}
 
-	videoURL := fmt.Sprintf("https://%v.s3.%v.amazonaws.com/%v", cfg.s3Bucket, cfg.s3Region, fileName)  
+	videoURL := fmt.Sprintf("https://%v.s3.%v.amazonaws.com/%v", cfg.s3Bucket, cfg.s3Region, fileKey)  
 	video.VideoURL= &videoURL
 
 	err = cfg.db.UpdateVideo(video)
@@ -107,4 +126,51 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	}
 
 	respondWithJSON(w, http.StatusOK, video)
+}
+
+func getVideoAspectRatio(filePath string) (string, error) {
+	cmd := exec.Command("ffprobe", "-v", "error", "-print_format",
+				"json", "-show_streams", filePath)
+	var buffer bytes.Buffer
+	cmd.Stdout = &buffer
+	err := cmd.Run()
+	if err != nil {
+		return "", err
+	}
+	videoInfo := struct{
+		Streams []struct{
+			Width float64 `json:"width"`
+			Height float64 `json:"height"`
+		} `json:"streams"`
+	}{}
+
+	err = json.Unmarshal(buffer.Bytes(), &videoInfo)
+	if err != nil {
+		return "", fmt.Errorf("ffprobe error: %w", err)
+	}
+	if len(videoInfo.Streams) < 1 {
+		return "", fmt.Errorf("video has no associated streams")
+	}	
+	if videoInfo.Streams[0].Height <= 0 {
+		return "", fmt.Errorf("invalid height for stream")
+	}
+	screenRatio := videoInfo.Streams[0].Width / videoInfo.Streams[0].Height
+	// Bad way lol, but I did get it to work.
+/*	videoInfo := map[string]any{}
+	err = json.Unmarshal(buffer.Bytes(), &videoInfo)
+	if err != nil {
+		return "", err
+	}
+	stream := videoInfo["streams"].([]any)[0].(map[string]any)
+	width := stream["width"].(float64)
+	height := stream["height"].(float64)
+	
+	screenRatio := width / height */
+	if screenRatio >= 0.45 && screenRatio <= 0.67 {
+		return "9:16", nil
+	}
+	if screenRatio >= 1.6 && screenRatio <= 2.0 {
+		return "16:9", nil
+	}
+	return "other", nil
 }
