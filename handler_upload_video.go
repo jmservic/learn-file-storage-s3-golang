@@ -87,12 +87,23 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	aspectRatio, err := getVideoAspectRatio(tempFile.Name())
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "error getting video aspect ratio", err)
+		return
 	}
 
-	_, err = tempFile.Seek(0, io.SeekStart)
+	//process video file for fast start
+	processedFilePath, err := processVideoForFastStart(tempFile.Name())
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "error seeking on temporary file", err)
+		respondWithError(w, http.StatusInternalServerError, "error processing video file for fast start", err)
+		return
 	}
+
+	processedFile, err := os.Open(processedFilePath)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "error opening fast start file", err)
+		return
+	}
+	defer os.Remove(processedFilePath)
+	defer processedFile.Close()
 
 	fileName := getAssetPath(mediaType)
 	var fileKey string
@@ -108,7 +119,7 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	putInput := s3.PutObjectInput{
 		Bucket: &cfg.s3Bucket,
 		Key: &fileKey,
-		Body: tempFile,
+		Body: processedFile,
 		ContentType: &contentType,
 	} 
 	_, err = cfg.s3Client.PutObject(r.Context(), &putInput)
@@ -116,12 +127,19 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		respondWithError(w, http.StatusInternalServerError, "error uploading file to amazon s3", err)
 	}
 
-	videoURL := fmt.Sprintf("https://%v.s3.%v.amazonaws.com/%v", cfg.s3Bucket, cfg.s3Region, fileKey)  
-	video.VideoURL= &videoURL
+//	videoURL := fmt.Sprintf("https://%v.s3.%v.amazonaws.com/%v", cfg.s3Bucket, cfg.s3Region, fileKey)  
+	videoBucketAndKey := cfg.s3Bucket + "," + fileKey
+	video.VideoURL= &videoBucketAndKey
 
 	err = cfg.db.UpdateVideo(video)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Error updating video metadata", err)
+		return
+	}
+
+	video, err = cfg.dbVideoToSignedVideo(video)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Error creating a signed URL for the video", err)
 		return
 	}
 
@@ -173,4 +191,16 @@ func getVideoAspectRatio(filePath string) (string, error) {
 		return "16:9", nil
 	}
 	return "other", nil
+}
+
+func processVideoForFastStart(filePath string) (string, error) {
+	outputFilePath := filePath + ".processing"
+	cmd := exec.Command("ffmpeg", "-i", filePath, "-c", "copy",
+				"-movflags", "faststart", "-f", "mp4", outputFilePath)
+	err := cmd.Run()
+	if err != nil {
+		return "", err
+	}
+
+	return outputFilePath, nil
 }
